@@ -109,6 +109,7 @@ void saveSettingsToEEPROM()
   EEPROM.write(290, udpPort & 0xFF);
   EEPROM.write(291, (udpPort >> 8) & 0xFF);
   writeStringToEEPROM(292, serverDescription, 32);
+  writeStringToEEPROM(292, displayName, 32);
   
   EEPROM.write(324, effectDefault);
   EEPROM.write(325, effectSpeedDefault);
@@ -333,6 +334,7 @@ void loadSettingsFromEEPROM(bool first)
   udpPort = EEPROM.read(290) + ((EEPROM.read(291) << 8) & 0xFF00);
 
   readStringFromEEPROM(292, serverDescription, 32);
+  readStringFromEEPROM(292, displayName, 32);
   
   effectDefault = EEPROM.read(324); effectCurrent = effectDefault;
   effectSpeedDefault = EEPROM.read(325); effectSpeed = effectSpeedDefault;

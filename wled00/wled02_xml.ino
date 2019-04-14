@@ -272,6 +272,7 @@ void getSettingsJS(byte subPage, char* dest)
   { 
     sappend('i',"UI",uiConfiguration);
     sappends('s',"DS",serverDescription);
+    sappends('s',"DN",displayName);
     sappend('c',"MD",useHSBDefault);
     sappend('i',"TH",currentTheme);
     char k[3]; k[0] = 'C'; k[2] = 0; //keys

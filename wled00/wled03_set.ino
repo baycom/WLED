@@ -128,6 +128,7 @@ void handleSettingsSet(AsyncWebServerRequest *request, byte subPage)
     int t = request->arg("UI").toInt();
     if (t >= 0 && t < 3) uiConfiguration = t;
     strcpy(serverDescription, request->arg("DS").c_str());
+    strcpy(displayName, request->arg("DN").c_str());
     useHSBDefault = request->hasArg("MD");
     useHSB = useHSBDefault;
     currentTheme = request->arg("TH").toInt();

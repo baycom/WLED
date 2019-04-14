@@ -170,7 +170,8 @@ User Interface Mode:
 <option value="1">Classic</option>
 <option value="2">Mobile</option>
 </select><br>
-Server description: <input name="DS" maxlength="32"><br><br>
+Server description: <input name="DS" maxlength="32"><br>
+Display name: <input name="DN" maxlength="32"><br><br>
 <i>The following options are for the classic UI!</i><br>
 Use HSB sliders instead of RGB by default: <input type="checkbox" name="MD"><br>
 Color Theme:

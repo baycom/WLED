@@ -21,7 +21,7 @@
 //#define WLED_DISABLE_BLYNK
 //#define WLED_DISABLE_CRONIXIE
 //#define WLED_DISABLE_HUESYNC
-//#define WLED_DISABLE_INFRARED    //there is no pin left for this on ESP8266-01
+#define WLED_DISABLE_INFRARED    //there is no pin left for this on ESP8266-01
 //#define WLED_DISABLE_MOBILE_UI
 
 
@@ -76,7 +76,8 @@
 #include "html_other.h"
 #include "WS2812FX.h"
 #include "ir_codes.h"
-
+#include "SSD1306Wire.h"
+#include <driver/adc.h>
 
 #if IR_PIN < 0
  #ifndef WLED_DISABLE_INFRARED
@@ -161,6 +162,7 @@ byte briMultiplier =  100;                    //% of brightness to set (to limit
 
 //User Interface CONFIG
 char serverDescription[33] = "WLED Light";    //Name of module
+char displayName[33] = "Tally";
 byte currentTheme = 7;                        //UI theme index for settings and classic UI
 byte uiConfiguration = 0;                     //0: automatic (depends on user-agent) 1: classic UI 2: mobile UI
 bool useHSB = true;                           //classic UI: use HSB sliders instead of RGB by default
@@ -424,6 +426,7 @@ AsyncMqttClient* mqtt = NULL;
 WiFiUDP notifierUdp, rgbUdp;
 WiFiUDP ntpUdp;
 E131* e131;
+unsigned long displayTime = 0;
 
 //led fx library object
 WS2812FX strip = WS2812FX();
@@ -470,9 +473,17 @@ const byte gamma8[] = {
   177,180,182,184,186,189,191,193,196,198,200,203,205,208,210,213,
   215,218,220,223,225,228,231,233,236,239,241,244,247,249,252,255 };
 
+SSD1306Wire display (0x3c, 5, 4);
+
 //function prototypes
 void serveMessage(AsyncWebServerRequest*,uint16_t,String,String,byte);
 
+float readBatteryLevel()
+{
+  adc1_config_width(ADC_WIDTH_BIT_10);   //Range 0-1023
+  adc1_config_channel_atten(ADC1_CHANNEL_0,ADC_ATTEN_DB_11);  //ADC_ATTEN_DB_11 = 0-3,6V
+  return adc1_get_raw( ADC1_CHANNEL_0 ) * (150.0f/100.0f) * 3.30f / 4096.0f; //Read analog
+}
 
 //turns all LEDs off and restarts ESP
 void reset()
@@ -512,6 +523,7 @@ bool oappendi(int i)
 //boot starts here
 void setup() {
   wledInit();
+  display.init();
 }
 
 
@@ -548,7 +560,31 @@ void loop() {
     yield();
     if (!offMode) strip.service();
   }
-  
+
+  if (millis() - displayTime > 1000) {
+    DEBUG_PRINTLN("---DISPLAY INFO---");
+    display.clear();
+    display.setTextAlignment(TEXT_ALIGN_CENTER);
+    display.setFont(ArialMT_Plain_24);
+    display.drawString(64, 0, displayName);
+
+    float batteryLevel=readBatteryLevel();
+    float cellFullVoltage = 4.2;
+    float cellEmptyVoltage = 3.3;
+    int battPercent = 0;
+
+    if(batteryLevel) {
+      battPercent=((batteryLevel-cellEmptyVoltage)/(cellFullVoltage-cellEmptyVoltage))*100;
+      battPercent=battPercent<0?0:battPercent>100?100:battPercent;
+    }
+
+    display.drawProgressBar(0, 32, 120, 10, battPercent);
+    display.setFont(ArialMT_Plain_16);
+    display.drawString(64, 48, String(batteryLevel) + "V");
+    display.display();
+
+    displayTime = millis();
+  }
   //DEBUG serial logging
   #ifdef WLED_DEBUG
    if (millis() - debugTime > 9999)
