@@ -77,8 +77,11 @@ char* XML_response(AsyncWebServerRequest *request, bool includeTheme, char* dest
   } else {
     oappend(serverDescription);
   }
-  
   oappend("</ds>");
+  oappend("<bl>");
+  char *str=(char *)String(readBatteryLevel()).c_str();
+  oappend(str);
+  oappend("</bl>");
   if (includeTheme)
   {
     char cs[6][9];

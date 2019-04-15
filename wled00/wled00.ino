@@ -473,16 +473,39 @@ const byte gamma8[] = {
   177,180,182,184,186,189,191,193,196,198,200,203,205,208,210,213,
   215,218,220,223,225,228,231,233,236,239,241,244,247,249,252,255 };
 
-SSD1306Wire display (0x3c, 5, 4);
+static SSD1306Wire display (0x3c, 5, 4);
 
 //function prototypes
 void serveMessage(AsyncWebServerRequest*,uint16_t,String,String,byte);
 
+#define SMA_LENGTH 60
+static int sma_vals[SMA_LENGTH];
+static int sma_pos = 0;
+static long sma_sum = 0;
+static int sma_init_done = 0;
+
+int SMAGenerator(int val)
+{
+  sma_sum = sma_sum - sma_vals[sma_pos] + val;
+  sma_vals[sma_pos] = val;
+  sma_pos=(sma_pos+1)%SMA_LENGTH;
+  return sma_sum / SMA_LENGTH;
+}
+
 float readBatteryLevel()
 {
-  adc1_config_width(ADC_WIDTH_BIT_10);   //Range 0-1023
+  adc1_config_width(ADC_WIDTH_BIT_12);   //Range 0-1023
   adc1_config_channel_atten(ADC1_CHANNEL_0,ADC_ATTEN_DB_11);  //ADC_ATTEN_DB_11 = 0-3,6V
-  return adc1_get_raw( ADC1_CHANNEL_0 ) * (150.0f/100.0f) * 3.30f / 4096.0f; //Read analog
+  int val=adc1_get_raw( ADC1_CHANNEL_0 );
+  if(!sma_init_done) {
+    memset(sma_vals, 0, sizeof(sma_vals));
+    for(int i=0;i<SMA_LENGTH;i++) {
+      SMAGenerator(val);
+    }
+    sma_init_done = 1;
+  }
+  val=SMAGenerator(val);
+  return 5.0587559809 * (float)val / 4096.0f; //Read analog at voltage divider batt+10k--Tap--20k-GND
 }
 
 //turns all LEDs off and restarts ESP
@@ -529,6 +552,31 @@ void setup() {
 
 //main program loop
 void loop() {
+  if (millis() - displayTime > 1000) {
+    DEBUG_PRINTLN("---DISPLAY INFO---");
+    display.clear();
+    display.setTextAlignment(TEXT_ALIGN_CENTER);
+    display.setFont(ArialMT_Plain_24);
+    display.drawString(64, 0, displayName);
+
+    float batteryLevel=readBatteryLevel();
+    float cellFullVoltage = 4.2;
+    float cellEmptyVoltage = 3.3;
+    int battPercent = 0;
+
+    if(batteryLevel) {
+      battPercent=((batteryLevel-cellEmptyVoltage)/(cellFullVoltage-cellEmptyVoltage))*100;
+      battPercent=battPercent<0?0:battPercent>100?100:battPercent;
+    }
+
+    display.drawProgressBar(0, 32, 120, 10, battPercent);
+    display.setFont(ArialMT_Plain_16);
+    display.drawString(64, 48, String(batteryLevel) + "V");
+    display.display();
+
+    displayTime = millis();
+  }
+
   handleSerial();
   handleNotifications();
   handleTransitions();
@@ -561,30 +609,6 @@ void loop() {
     if (!offMode) strip.service();
   }
 
-  if (millis() - displayTime > 1000) {
-    DEBUG_PRINTLN("---DISPLAY INFO---");
-    display.clear();
-    display.setTextAlignment(TEXT_ALIGN_CENTER);
-    display.setFont(ArialMT_Plain_24);
-    display.drawString(64, 0, displayName);
-
-    float batteryLevel=readBatteryLevel();
-    float cellFullVoltage = 4.2;
-    float cellEmptyVoltage = 3.3;
-    int battPercent = 0;
-
-    if(batteryLevel) {
-      battPercent=((batteryLevel-cellEmptyVoltage)/(cellFullVoltage-cellEmptyVoltage))*100;
-      battPercent=battPercent<0?0:battPercent>100?100:battPercent;
-    }
-
-    display.drawProgressBar(0, 32, 120, 10, battPercent);
-    display.setFont(ArialMT_Plain_16);
-    display.drawString(64, 48, String(batteryLevel) + "V");
-    display.display();
-
-    displayTime = millis();
-  }
   //DEBUG serial logging
   #ifdef WLED_DEBUG
    if (millis() - debugTime > 9999)
