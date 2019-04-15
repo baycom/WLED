@@ -3,7 +3,7 @@
  * EEPROM Map: https://github.com/Aircoookie/WLED/wiki/EEPROM-Map
  */
 
-#define EEPSIZE 2560
+#define EEPSIZE 3071
 
 //eeprom Version code, enables default settings instead of 0 init on update
 #define EEPVER 10
@@ -257,7 +257,7 @@ void saveSettingsToEEPROM()
   writeStringToEEPROM(2333, mqttDeviceTopic, 32);
   writeStringToEEPROM(2366,  mqttGroupTopic, 32);
 
-  writeStringToEEPROM(2398, displayName, 32);
+  writeStringToEEPROM(2944, displayName, 32);
 
   EEPROM.commit();
 }
@@ -335,7 +335,6 @@ void loadSettingsFromEEPROM(bool first)
   udpPort = EEPROM.read(290) + ((EEPROM.read(291) << 8) & 0xFF00);
 
   readStringFromEEPROM(292, serverDescription, 32);
-  readStringFromEEPROM(292, displayName, 32);
   
   effectDefault = EEPROM.read(324); effectCurrent = effectDefault;
   effectSpeedDefault = EEPROM.read(325); effectSpeed = effectSpeedDefault;
@@ -519,6 +518,7 @@ void loadSettingsFromEEPROM(bool first)
   
   //user MOD memory
   //2944 - 3071 reserved
+  readStringFromEEPROM(2944, displayName, 32);
   
   useHSB = useHSBDefault;
 

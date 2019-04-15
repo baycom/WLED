@@ -426,7 +426,7 @@ AsyncMqttClient* mqtt = NULL;
 WiFiUDP notifierUdp, rgbUdp;
 WiFiUDP ntpUdp;
 E131* e131;
-unsigned long displayTime = 0;
+unsigned long displayTime = -10000;
 
 //led fx library object
 WS2812FX strip = WS2812FX();
@@ -474,6 +474,7 @@ const byte gamma8[] = {
   215,218,220,223,225,228,231,233,236,239,241,244,247,249,252,255 };
 
 static SSD1306Wire display (0x3c, 5, 4);
+static int displayCycle = 0;
 
 //function prototypes
 void serveMessage(AsyncWebServerRequest*,uint16_t,String,String,byte);
@@ -549,15 +550,15 @@ void setup() {
   display.init();
 }
 
-
 //main program loop
 void loop() {
-  if (millis() - displayTime > 1000) {
+  if (millis() - displayTime > 10000) {
+
     DEBUG_PRINTLN("---DISPLAY INFO---");
     display.clear();
     display.setTextAlignment(TEXT_ALIGN_CENTER);
     display.setFont(ArialMT_Plain_24);
-    display.drawString(64, 0, displayName);
+    display.drawString(64, (displayCycle&1)*32, displayName);
 
     float batteryLevel=readBatteryLevel();
     float cellFullVoltage = 4.2;
@@ -569,11 +570,12 @@ void loop() {
       battPercent=battPercent<0?0:battPercent>100?100:battPercent;
     }
 
-    display.drawProgressBar(0, 32, 120, 10, battPercent);
+    display.drawProgressBar(0, 32*!(displayCycle&1), 120, 10, battPercent);
     display.setFont(ArialMT_Plain_16);
-    display.drawString(64, 48, String(batteryLevel) + "V");
+    display.drawString(64, 16+32*!(displayCycle&1), String(batteryLevel) + "V");
     display.display();
 
+    displayCycle++;
     displayTime = millis();
   }
 
