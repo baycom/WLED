@@ -109,7 +109,6 @@ void saveSettingsToEEPROM()
   EEPROM.write(290, udpPort & 0xFF);
   EEPROM.write(291, (udpPort >> 8) & 0xFF);
   writeStringToEEPROM(292, serverDescription, 32);
-  writeStringToEEPROM(292, displayName, 32);
   
   EEPROM.write(324, effectDefault);
   EEPROM.write(325, effectSpeedDefault);
@@ -257,7 +256,9 @@ void saveSettingsToEEPROM()
   writeStringToEEPROM(2300,      mqttServer, 32);
   writeStringToEEPROM(2333, mqttDeviceTopic, 32);
   writeStringToEEPROM(2366,  mqttGroupTopic, 32);
-  
+
+  writeStringToEEPROM(2398, displayName, 32);
+
   EEPROM.commit();
 }
 
