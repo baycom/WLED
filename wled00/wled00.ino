@@ -30,7 +30,7 @@
 //#define WLED_ENABLE_FS_EDITOR    //enable /edit page for editing SPIFFS content. Will also be disabled with OTA lock
 
 //to toggle usb serial debug (un)comment the following line
-//#define WLED_DEBUG
+#define WLED_DEBUG
 
 
 //library inclusions
@@ -427,6 +427,7 @@ WiFiUDP notifierUdp, rgbUdp;
 WiFiUDP ntpUdp;
 E131* e131;
 unsigned long displayTime = -10000;
+unsigned long lastReconnect = -10000;
 
 //led fx library object
 WS2812FX strip = WS2812FX();
@@ -552,6 +553,18 @@ void setup() {
 
 //main program loop
 void loop() {
+  if(!onlyAP && WiFi.status() == 6) {
+    if(millis()-lastReconnect > 5000) {
+      DEBUG_PRINTLN("+++++++++++++ trying to reconnect +++++++++++++");
+      WiFi.reconnect();
+#if 0
+      WiFi.disconnect();
+      WiFi.begin(clientSSID, clientPass);
+#endif
+      lastReconnect = millis();
+    }
+  }
+
   if (millis() - displayTime > 10000) {
 
     DEBUG_PRINTLN("---DISPLAY INFO---");
