@@ -547,8 +547,12 @@ bool oappendi(int i)
 
 //boot starts here
 void setup() {
-  wledInit();
   display.init();
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setFont(ArialMT_Plain_16);
+  display.drawString(64, 32, "Version: " + String(versionString);
+  display.display();
+  wledInit();
 }
 
 //main program loop
@@ -565,27 +569,43 @@ void loop() {
     }
   }
 
-  if (millis() - displayTime > 10000) {
+  if (millis() - displayTime > 1000) {
 
-    DEBUG_PRINTLN("---DISPLAY INFO---");
-    display.clear();
-    display.setTextAlignment(TEXT_ALIGN_CENTER);
-    display.setFont(ArialMT_Plain_24);
-    display.drawString(64, (displayCycle&1)*32, displayName);
-
-    float batteryLevel=readBatteryLevel();
+    int toggle=(displayCycle>>4)&1;
     float cellFullVoltage = 4.2;
     float cellEmptyVoltage = 3.3;
     int battPercent = 0;
+    float batteryLevel=readBatteryLevel();
 
     if(batteryLevel) {
       battPercent=((batteryLevel-cellEmptyVoltage)/(cellFullVoltage-cellEmptyVoltage))*100;
       battPercent=battPercent<0?0:battPercent>100?100:battPercent;
     }
 
-    display.drawProgressBar(0, 32*!(displayCycle&1), 120, 10, battPercent);
+    DEBUG_PRINTLN("---DISPLAY INFO---");
+    display.clear();
+    display.setTextAlignment(TEXT_ALIGN_CENTER);
+    display.setFont(ArialMT_Plain_24);
+    display.drawString(64, toggle*32, displayName);
     display.setFont(ArialMT_Plain_16);
-    display.drawString(64, 16+32*!(displayCycle&1), String(batteryLevel) + "V");
+
+    switch((displayCycle>>1)&3) {
+      case 0:
+        display.drawString(64, 16+32*!toggle, String(batteryLevel) + "V");
+        break;
+      case 1:
+        display.drawString(64, 16+32*!toggle, "WIFI: " + String(WiFi.status()) );
+        break;
+      case 2:
+        display.drawString(64, 16+32*!toggle, "RSSI: " + String(WiFi.RSSI()) + "dBm");
+        break;
+      case 3:
+        display.setFont(ArialMT_Plain_10);
+        display.drawString(64, 16+32*!toggle, "IP: " + WiFi.localIP().toString() );
+        break;
+    }
+
+    display.drawProgressBar(0, 32*!toggle, 120, 10, battPercent);
     display.display();
 
     displayCycle++;
