@@ -74,9 +74,11 @@
 #include "html_mobile.h"
 #include "html_settings.h"
 #include "html_other.h"
+#include "SSD1306Wire.h"
+#undef BLACK
+#undef WHITE
 #include "WS2812FX.h"
 #include "ir_codes.h"
-#include "SSD1306Wire.h"
 #include <driver/adc.h>
 
 #if IR_PIN < 0
@@ -550,7 +552,7 @@ void setup() {
   display.init();
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_16);
-  display.drawString(64, 32, "Version: " + String(versionString);
+  display.drawString(64, 32, "Version: " + String(versionString));
   display.display();
   wledInit();
 }
