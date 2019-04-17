@@ -552,7 +552,7 @@ void setup() {
   display.init();
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_16);
-  display.drawString(64, 32, "Version: " + String(versionString));
+  display.drawString(64, 24, "Version: " + String(versionString));
   display.display();
   wledInit();
 }
@@ -563,10 +563,6 @@ void loop() {
     if(millis()-lastReconnect > 5000) {
       DEBUG_PRINTLN("+++++++++++++ trying to reconnect +++++++++++++");
       WiFi.reconnect();
-#if 0
-      WiFi.disconnect();
-      WiFi.begin(clientSSID, clientPass);
-#endif
       lastReconnect = millis();
     }
   }
@@ -595,8 +591,10 @@ void loop() {
       case 0:
         display.drawString(64, 16+32*!toggle, String(batteryLevel) + "V");
         break;
-      case 1:
-        display.drawString(64, 16+32*!toggle, "WIFI: " + String(WiFi.status()) );
+      case 1: {
+        int state=WiFi.status();
+        display.drawString(64, 16+32*!toggle, "WIFI: " + (state!=WL_CONNECTED?String(state):String("OK")) );
+        }
         break;
       case 2:
         display.drawString(64, 16+32*!toggle, "RSSI: " + String(WiFi.RSSI()) + "dBm");
