@@ -74,7 +74,7 @@
 #include "html_mobile.h"
 #include "html_settings.h"
 #include "html_other.h"
-#include "SSD1306Wire.h"
+#include "src/dependencies/esp8266-oled-ssd1306/src/SSD1306Wire.h"
 #undef BLACK
 #undef WHITE
 #include "WS2812FX.h"
