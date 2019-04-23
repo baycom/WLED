@@ -563,6 +563,9 @@ void loop() {
     if(millis()-lastReconnect > 5000) {
       DEBUG_PRINTLN("+++++++++++++ trying to reconnect +++++++++++++");
       WiFi.reconnect();
+#ifdef ARDUINO_ARCH_ESP32
+      WiFi.setHostname(serverDescription);
+#endif
       lastReconnect = millis();
     }
   }
