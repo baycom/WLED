@@ -213,6 +213,7 @@ void initCon()
    WiFi.begin(clientSSID, clientPass);
   #ifdef ARDUINO_ARCH_ESP32
    WiFi.setHostname(serverDescription);
+   WiFi.setSleep(false);
   #endif
   unsigned long lastTry = 0;
   bool con = false;

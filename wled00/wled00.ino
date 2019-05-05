@@ -565,6 +565,7 @@ void loop() {
       WiFi.reconnect();
 #ifdef ARDUINO_ARCH_ESP32
       WiFi.setHostname(serverDescription);
+      WiFi.setSleep(false);
 #endif
       lastReconnect = millis();
     }
