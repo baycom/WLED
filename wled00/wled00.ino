@@ -548,6 +548,7 @@ void setup() {
   display.setFont(ArialMT_Plain_16);
   display.drawString(64, 24, "Version: " + String(versionString));
   display.display();
+  displayTime = millis();
 //<- BayCom
 
   wledInit();
@@ -574,7 +575,7 @@ void loop() {
     float cellFullVoltage = 4.2;
     float cellEmptyVoltage = 3.3;
     int battPercent = 0;
-   float batteryLevel=readBatteryLevel();
+    float batteryLevel=readBatteryLevel();
 
     if(batteryLevel) {
       battPercent=((batteryLevel-cellEmptyVoltage)/(cellFullVoltage-cellEmptyVoltage))*100;
