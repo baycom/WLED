@@ -2,7 +2,7 @@
  * UDP notifier
  */
 
-#define WLEDPACKETSIZE 24
+#define WLEDPACKETSIZE 29
 #define UDP_IN_MAXSIZE 1472
 
 
@@ -34,7 +34,11 @@ void notify(byte callMode, bool followUp=false)
   udpOut[8] = effectCurrent;
   udpOut[9] = effectSpeed;
   udpOut[10] = col[3];
-  udpOut[11] = 5; //compatibilityVersionByte: 0: old 1: supports white 2: supports secondary color 3: supports FX intensity, 24 byte packet 4: supports transitionDelay 5: sup palette
+  //compatibilityVersionByte: 
+  //0: old 1: supports white 2: supports secondary color
+  //3: supports FX intensity, 24 byte packet 4: supports transitionDelay 5: sup palette
+  //6: supports timebase syncing, 29 byte packet 7: supports tertiary color 
+  udpOut[11] = 7; 
   udpOut[12] = colSec[0];
   udpOut[13] = colSec[1];
   udpOut[14] = colSec[2];
@@ -43,6 +47,18 @@ void notify(byte callMode, bool followUp=false)
   udpOut[17] = (transitionDelay >> 0) & 0xFF;
   udpOut[18] = (transitionDelay >> 8) & 0xFF;
   udpOut[19] = effectPalette;
+  uint32_t colTer = strip.getSegment(strip.getMainSegmentId()).colors[2];
+  udpOut[20] = (colTer >> 16) & 0xFF;
+  udpOut[21] = (colTer >>  8) & 0xFF;
+  udpOut[22] = (colTer >>  0) & 0xFF;
+  udpOut[23] = (colTer >> 24) & 0xFF;
+  
+  udpOut[24] = followUp;
+  uint32_t t = millis() + strip.timebase;
+  udpOut[25] = (t >> 24) & 0xFF;
+  udpOut[26] = (t >> 16) & 0xFF;
+  udpOut[27] = (t >>  8) & 0xFF;
+  udpOut[28] = (t >>  0) & 0xFF;
   
   IPAddress broadcastIp;
   broadcastIp = ~uint32_t(WiFi.subnetMask()) | uint32_t(WiFi.gatewayIP());
@@ -63,7 +79,6 @@ void arlsLock(uint32_t timeoutMs)
     {
       strip.setPixelColor(i,0,0,0,0);
     }
-    strip.unlockAll();
     realtimeActive = true;
   }
   realtimeTimeout = millis() + timeoutMs;
@@ -72,36 +87,26 @@ void arlsLock(uint32_t timeoutMs)
 }
 
 
-void initE131(){
-  if (WiFi.status() == WL_CONNECTED && e131Enabled)
-  {
-    e131 = new E131();
-    e131->begin((e131Multicast) ? E131_MULTICAST : E131_UNICAST , e131Universe);
-  } else {
-    e131Enabled = false;
-  }
-}
-
-
-void handleE131(){
+void handleE131Packet(e131_packet_t* p, IPAddress clientIP){
   //E1.31 protocol support
-  if(e131Enabled) {
-    uint16_t len = e131->parsePacket();
-    if (!len || e131->universe < e131Universe || e131->universe > e131Universe +4) return;
-    len /= 3; //one LED is 3 DMX channels
-    
-    uint16_t multipacketOffset = (e131->universe - e131Universe)*170; //if more than 170 LEDs (510 channels), client will send in next higher universe 
-    if (ledCount <= multipacketOffset) return;
+  uint16_t uni = htons(p->universe);
+  if (uni < e131Universe || uni >= e131Universe + E131_MAX_UNIVERSE_COUNT) return;
+  
+  uint16_t len = htons(p->property_value_count) -1;
+  len /= 3; //one LED is 3 DMX channels
+  
+  uint16_t multipacketOffset = (uni - e131Universe)*170; //if more than 170 LEDs (510 channels), client will send in next higher universe 
+  if (ledCount <= multipacketOffset) return;
 
-    arlsLock(realtimeTimeoutMs);
-    if (len + multipacketOffset > ledCount) len = ledCount - multipacketOffset;
-    
-    for (uint16_t i = 0; i < len; i++) {
-      int j = i * 3;
-      setRealtimePixel(i + multipacketOffset, e131->data[j], e131->data[j+1], e131->data[j+2], 0);
-    }
-    strip.show();
+  arlsLock(realtimeTimeoutMs);
+  if (len + multipacketOffset > ledCount) len = ledCount - multipacketOffset;
+  
+  for (uint16_t i = 0; i < len; i++) {
+    int j = i * 3 +1;
+    setRealtimePixel(i + multipacketOffset, p->property_values[j], p->property_values[j+1], p->property_values[j+2], 0);
   }
+
+  e131NewData = true;
 }
 
 
@@ -112,12 +117,15 @@ void handleNotifications()
     notify(notificationSentCallMode,true);
   }
 
-  handleE131();
+  if (e131NewData && millis() - strip.getLastShow() > 15)
+  {
+    e131NewData = false;
+    strip.show();
+  }
 
   //unlock strip when realtime UDP times out
   if (realtimeActive && millis() > realtimeTimeout)
   {
-    //strip.unlockAll();
     strip.setBrightness(bri);
     realtimeActive = false;
     //strip.setMode(effectCurrent);
@@ -160,6 +168,10 @@ void handleNotifications()
     //wled notifier, block if realtime packets active
     if (udpIn[0] == 0 && !realtimeActive && receiveNotifications)
     {
+      //ignore notification if received within a second after sending a notification ourselves
+      if (millis() - notificationSentTime < 1000) return;
+      if (udpIn[1] > 199) return; //do not receive custom versions
+      
       bool someSel = (receiveNotificationBrightness || receiveNotificationColor || receiveNotificationEffects);
       //apply colors from notification
       if (receiveNotificationColor || !someSel)
@@ -167,7 +179,7 @@ void handleNotifications()
         col[0] = udpIn[3];
         col[1] = udpIn[4];
         col[2] = udpIn[5];
-        if (udpIn[11] > 0) //check if sending modules white val is inteded
+        if (udpIn[11] > 0) //sending module's white val is intended
         {
           col[3] = udpIn[10];
           if (udpIn[11] > 1)
@@ -177,11 +189,22 @@ void handleNotifications()
             colSec[2] = udpIn[14];
             colSec[3] = udpIn[15];
           }
+          if (udpIn[11] > 5)
+          {
+            uint32_t t = (udpIn[25] << 24) | (udpIn[26] << 16) | (udpIn[27] << 8) | (udpIn[28]);
+            t += 2;
+            t -= millis();
+            strip.timebase = t;
+          }
+          if (udpIn[11] > 6)
+          {
+            strip.setColor(2, udpIn[20], udpIn[21], udpIn[22], udpIn[23]); //tertiary color
+          }
         }
       }
 
       //apply effects from notification
-      if (receiveNotificationEffects || !someSel)
+      if (udpIn[11] < 200 && (receiveNotificationEffects || !someSel))
       {
         if (udpIn[8] < strip.getModeCount()) effectCurrent = udpIn[8];
         effectSpeed   = udpIn[9];
@@ -200,7 +223,7 @@ void handleNotifications()
       if (receiveNotificationBrightness || !someSel) bri = udpIn[2];
       colorUpdated(3);
       
-    }  else if (udpIn[0] > 0 && udpIn[0] < 4 && receiveDirect) //1 warls //2 drgb //3 drgbw
+    }  else if (udpIn[0] > 0 && udpIn[0] < 5 && receiveDirect) //1 warls //2 drgb //3 drgbw
     {
       realtimeIP = notifierUdp.remoteIP();
       DEBUG_PRINTLN(notifierUdp.remoteIP());
@@ -242,7 +265,7 @@ void handleNotifications()
           for (uint16_t i = 4; i < packetSize -2; i += 3)
           {
              if (id >= ledCount) break;
-            setRealtimePixel(id, udpIn[i], udpIn[i+1], udpIn[i+2], udpIn[i+3]);
+            setRealtimePixel(id, udpIn[i], udpIn[i+1], udpIn[i+2], 0);
             id++;
           }
         }
@@ -258,9 +281,9 @@ void setRealtimePixel(uint16_t i, byte r, byte g, byte b, byte w)
   uint16_t pix = i + arlsOffset;
   if (pix < ledCount)
   {
-    if (!arlsDisableGammaCorrection && useGammaCorrectionRGB)
+    if (!arlsDisableGammaCorrection && strip.gammaCorrectCol)
     {
-      strip.setPixelColor(pix, gamma8[r], gamma8[g], gamma8[b], gamma8[w]);
+      strip.setPixelColor(pix, strip.gamma8(r), strip.gamma8(g), strip.gamma8(b), strip.gamma8(w));
     } else {
       strip.setPixelColor(pix, r, g, b, w);
     }

@@ -16,12 +16,24 @@ void shortPressAction()
 
 void handleButton()
 {
+#ifdef BTNPIN
   if (!buttonEnabled) return;
   
-  if (digitalRead(BTNPIN) == LOW && !buttonPressedBefore) //pressed
+  if (digitalRead(BTNPIN) == LOW) //pressed
   {
-    buttonPressedTime = millis();
+    if (!buttonPressedBefore) buttonPressedTime = millis();
     buttonPressedBefore = true;
+
+    if (millis() - buttonPressedTime > 600) //long press
+    {
+      if (!buttonLongPressed) 
+      {
+        if (macroLongPress) {applyMacro(macroLongPress);}
+        else _setRandomColor(false,true);
+
+        buttonLongPressed = true;
+      }
+    }
   }
   else if (digitalRead(BTNPIN) == HIGH && buttonPressedBefore) //released
   {
@@ -30,13 +42,11 @@ void handleButton()
     bool doublePress = buttonWaitTime;
     buttonWaitTime = 0;
 
-    if (dur > 6000) {initAP();}
-    else if (dur > 600) //long press
+    if (dur > 6000) //long press
     {
-      if (macroLongPress) {applyMacro(macroLongPress);}
-      else _setRandomColor(false,true);
+      initAP(true);
     }
-    else { //short press
+    else if (!buttonLongPressed) { //short press
       if (macroDoublePress)
       {
         if (doublePress) applyMacro(macroDoublePress);
@@ -44,6 +54,7 @@ void handleButton()
       } else shortPressAction();
     }
     buttonPressedBefore = false;
+    buttonLongPressed = false;
   }
 
   if (buttonWaitTime && millis() - buttonWaitTime > 450 && !buttonPressedBefore)
@@ -51,6 +62,7 @@ void handleButton()
     buttonWaitTime = 0;
     shortPressAction();
   }
+#endif
 }
 
 void handleIO()

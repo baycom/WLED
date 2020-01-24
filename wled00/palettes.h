@@ -529,12 +529,49 @@ DEFINE_GRADIENT_PALETTE( April_Night_gp ) {
   127, 249,150,  5, //yellow
   143,   1,  5, 45,
   162,   1,  5, 45,
-  178, 255,92,  0, //pastel orange
+  178, 255, 92,  0, //pastel orange
   193,   1,  5, 45,
   214,   1,  5, 45,
   229, 223, 45, 72, //pink
   244,   1,  5, 45,
   255,   1,  5, 45};
+
+DEFINE_GRADIENT_PALETTE( Orangery_gp ) {
+    0, 255, 95, 23,
+   30, 255, 82,  0,
+   60, 223, 13,  8,
+   90, 144, 44,  2,
+  120, 255,110, 17,
+  150, 255, 69,  0,
+  180, 158, 13, 11,
+  210, 241, 82, 17,
+  255, 213, 37,  4};
+
+//inspired by Mark Kriegsman https://gist.github.com/kriegsman/756ea6dcae8e30845b5a
+DEFINE_GRADIENT_PALETTE( C9_gp ) {
+    0, 184,  4,  0, //red
+   60, 184,  4,  0,
+   65, 144, 44,  2, //amber
+  125, 144, 44,  2,
+  130,   4, 96,  2, //green
+  190,   4, 96,  2,
+  195,   7,  7, 88, //blue
+  255,   7,  7, 88};
+
+DEFINE_GRADIENT_PALETTE( Sakura_gp ) {
+    0, 196, 19, 10,
+   65, 255, 69, 45,
+  130, 223, 45, 72,
+  195, 255, 82,103,
+  255, 223, 13, 17};
+
+DEFINE_GRADIENT_PALETTE( Aurora_gp ) {
+    0,   1,  5, 45, //deep blue
+   64,   0,200, 23,
+  128,   0,255,  0, //green
+  170,   0,243, 45,
+  200,   0,135,  7,
+  255,   1,  5, 45};//deep blue
   
 
 // Single array of defined cpt-city color palettes.
@@ -581,7 +618,11 @@ const TProgmemRGBGradientPalettePtr gGradientPalettes[] = {
   Blue_Cyan_Yellow_gp,          //43-30 Yelblu
   Orange_Teal_gp,               //44-31 Orange & Teal
   Tiamat_gp,                    //45-32 Tiamat
-  April_Night_gp                //46-33 April Night
+  April_Night_gp,               //46-33 April Night
+  Orangery_gp,                  //47-34 Orangery
+  C9_gp,                        //48-35 C9
+  Sakura_gp,                    //49-36 Sakura
+  Aurora_gp,                    //50-37 Aurora
 };
 
 

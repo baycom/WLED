@@ -4,17 +4,6 @@
 #ifndef WLED_DISABLE_HUESYNC
 void handleHue()
 {
-  if (hueClient != nullptr && millis() - hueLastRequestSent > huePollIntervalMs && WiFi.status() == WL_CONNECTED)
-  {
-    hueLastRequestSent = millis();
-    if (huePollingEnabled)
-    {
-      reconnectHue();
-    } else {
-      hueClient->close();
-      if (hueError[0] == 'A') strcpy(hueError,"Inactive");
-    }
-  }
   if (hueReceived)
   {
     colorUpdated(7); hueReceived = false;
@@ -25,11 +14,22 @@ void handleHue()
       hueNewKey = false;
     }
   }
+  
+  if (!WLED_CONNECTED || hueClient == nullptr || millis() - hueLastRequestSent < huePollIntervalMs) return;
+
+  hueLastRequestSent = millis();
+  if (huePollingEnabled)
+  {
+    reconnectHue();
+  } else {
+    hueClient->close();
+    if (hueError[0] == 'A') strcpy(hueError,"Inactive");
+  }
 }
 
 void reconnectHue()
 {
-  if (WiFi.status() != WL_CONNECTED || !huePollingEnabled) return;
+  if (!WLED_CONNECTED || !huePollingEnabled) return;
   DEBUG_PRINTLN("Hue reconnect");
   if (hueClient == nullptr) {
     hueClient = new AsyncClient();
@@ -87,16 +87,16 @@ void onHueData(void* arg, AsyncClient* client, void *data, size_t len)
   if (str == nullptr) return;
   str += 4;
 
-  StaticJsonBuffer<512> jb;
+  StaticJsonDocument<512> root;
   if (str[0] == '[') //is JSON array
   {
-    JsonArray& root = jb.parseArray(str);
-    if (!root.success())
+    auto error = deserializeJson(root, str);
+    if (error)
     {
       strcpy(hueError,"JSON parsing error"); return;
     }
+    
     int hueErrorCode = root[0]["error"]["type"];
-  
     if (hueErrorCode)//hue bridge returned error
     {
       switch (hueErrorCode)
@@ -130,8 +130,8 @@ void onHueData(void* arg, AsyncClient* client, void *data, size_t len)
   if (str == nullptr) return;
   str = strstr(str,"{");
   
-  JsonObject& root = jb.parseObject(str);
-  if (!root.success())
+  auto error = deserializeJson(root, str);
+  if (error)
   {
     strcpy(hueError,"JSON parsing error"); return;
   }

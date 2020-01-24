@@ -1,6 +1,23 @@
 /*
  * LED methods
  */
+void setValuesFromMainSeg()
+{
+  WS2812FX::Segment& seg = strip.getSegment(strip.getMainSegmentId());
+  colorFromUint32(seg.colors[0]);
+  colorFromUint32(seg.colors[1], true);
+  effectCurrent = seg.mode;
+  effectSpeed = seg.speed;
+  effectIntensity = seg.intensity;
+  effectPalette = seg.palette;
+}
+
+
+void resetTimebase()
+{
+  strip.timebase = 0 - millis();
+}
+
 
 void toggleOnOff()
 {
@@ -21,12 +38,7 @@ void setAllLeds() {
     double d = briT*briMultiplier;
     int val = d/100;
     if (val > 255) val = 255;
-    if (useGammaCorrectionBri)
-    {
-      strip.setBrightness(gamma8[val]);
-    } else {
-      strip.setBrightness(val);
-    }
+    strip.setBrightness(val);
   }
   if (!enableSecTransition)
   {
@@ -40,14 +52,8 @@ void setAllLeds() {
     colorRGBtoRGBW(colT);
     colorRGBtoRGBW(colSecT);
   }
-  if (useGammaCorrectionRGB)
-  {
-    strip.setColor(gamma8[colT[0]], gamma8[colT[1]], gamma8[colT[2]], gamma8[colT[3]]);
-    strip.setSecondaryColor(gamma8[colSecT[0]], gamma8[colSecT[1]], gamma8[colSecT[2]], gamma8[colSecT[3]]);
-  } else {
-    strip.setColor(colT[0], colT[1], colT[2], colT[3]);
-    strip.setSecondaryColor(colSecT[0], colSecT[1], colSecT[2], colSecT[3]);
-  }
+  strip.setColor(0, colT[0], colT[1], colT[2], colT[3]);
+  strip.setColor(1, colSecT[0], colSecT[1], colSecT[2], colSecT[3]);
 }
 
 
@@ -82,6 +88,8 @@ void colorUpdated(int callMode)
 {
   //call for notifier -> 0: init 1: direct change 2: button 3: notification 4: nightlight 5: other (No notification)
   //                     6: fx changed 7: hue 8: preset cycle 9: blynk 10: alexa
+  if (callMode != 0 && callMode != 1 && callMode != 5) strip.applyToAllSelected = true; //if not from JSON api, which directly sets segments
+  
   bool fxChanged = strip.setEffectConfig(effectCurrent, effectSpeed, effectIntensity, effectPalette);
   if (!colorChanged())
   {
@@ -93,10 +101,14 @@ void colorUpdated(int callMode)
       notify(6);
       if (callMode != 8) interfaceUpdateCallMode = 6;
       if (realtimeTimeout == UINT32_MAX) realtimeTimeout = 0;
+      if (isPreset) {isPreset = false;}
+          else {currentPreset = -1;}
     }
     return; //no change
   }
   if (realtimeTimeout == UINT32_MAX) realtimeTimeout = 0;
+  if (isPreset) {isPreset = false;}
+      else {currentPreset = -1;}
   if (callMode != 5 && nightlightActive && nightlightFade)
   {
     briNlT = bri;
@@ -108,6 +120,7 @@ void colorUpdated(int callMode)
     colIT[i] = col[i];
     colSecIT[i] = colSec[i];
   }
+  if (briT == 0 && callMode != 3) resetTimebase(); 
   briIT = bri;
   if (bri > 0) briLast = bri;
   
@@ -116,7 +129,8 @@ void colorUpdated(int callMode)
   if (fadeTransition)
   {
     //set correct delay if not using notification delay
-    if (callMode != 3) transitionDelayTemp = transitionDelay;
+    if (callMode != 3 && !jsonTransitionOnce) transitionDelayTemp = transitionDelay;
+    jsonTransitionOnce = false;
     if (transitionDelayTemp == 0) {setLedsStandard(); strip.trigger(); return;}
     
     if (transitionActive)
@@ -153,7 +167,7 @@ void updateInterfaces(uint8_t callMode)
   }
   #endif
   if (callMode != 9 && callMode != 5) updateBlynk();
-  publishMqtt();
+  doPublishMqtt = true;
   lastInterfaceUpdate = millis();
 }
 
@@ -166,6 +180,7 @@ void handleTransitions()
     updateInterfaces(interfaceUpdateCallMode);
     interfaceUpdateCallMode = 0; //disable
   }
+  if (doPublishMqtt) publishMqtt();
   
   if (transitionActive && transitionDelayTemp > 0)
   {
@@ -202,11 +217,16 @@ void handleNightlight()
       nightlightDelayMs = (int)(nightlightDelayMins*60000);
       nightlightActiveOld = true;
       briNlT = bri;
+      for (byte i=0; i<4; i++) colNlT[i] = col[i];                                    // remember starting color
     }
     float nper = (millis() - nightlightStartTime)/((float)nightlightDelayMs);
     if (nightlightFade)
     {
       bri = briNlT + ((nightlightTargetBri - briNlT)*nper);
+      if (nightlightColorFade)                                                        // color fading only is enabled with "NF=2"
+      {
+        for (byte i=0; i<4; i++) col[i] = colNlT[i]+ ((colSec[i] - colNlT[i])*nper);  // fading from actual color to secondary color
+      }
       colorUpdated(5);
     }
     if (nper >= 1)

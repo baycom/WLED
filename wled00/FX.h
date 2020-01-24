@@ -40,14 +40,28 @@
 #define min(a,b) ((a)<(b)?(a):(b))
 #define max(a,b) ((a)>(b)?(a):(b))
 
-/* each segment uses 37 bytes of SRAM memory, so if you're application fails because of
+/* Not used in all effects yet */
+#define WLED_FPS         42
+#define FRAMETIME        (1000/WLED_FPS)
+
+/* each segment uses 52 bytes of SRAM memory, so if you're application fails because of
   insufficient memory, decreasing MAX_NUM_SEGMENTS may help */
-#define MAX_NUM_SEGMENTS 1
-#define NUM_COLORS        3 /* number of colors per segment */
+#define MAX_NUM_SEGMENTS 10
+
+/* How much data bytes all segments combined may allocate */
+#ifdef ESP8266
+#define MAX_SEGMENT_DATA 2048
+#else
+#define MAX_SEGMENT_DATA 8192
+#endif
+
+#define NUM_COLORS       3 /* number of colors per segment */
 #define SEGMENT          _segments[_segment_index]
-#define SEGMENT_RUNTIME  _segment_runtimes[_segment_index]
-#define SEGMENT_LENGTH   (SEGMENT.stop - SEGMENT.start)
-#define SPEED_FORMULA_L  5 + (50*(255 - SEGMENT.speed))/SEGMENT_LENGTH
+#define SEGCOLOR(x)      gamma32(_segments[_segment_index].colors[x])
+#define SEGENV           _segment_runtimes[_segment_index]
+#define SEGLEN           _virtualSegmentLength
+#define SEGACT           SEGMENT.stop
+#define SPEED_FORMULA_L  5 + (50*(255 - SEGMENT.speed))/SEGLEN
 #define RESET_RUNTIME    memset(_segment_runtimes, 0, sizeof(_segment_runtimes))
 
 // some common colors
@@ -77,7 +91,7 @@
 #define IS_REVERSE      ((SEGMENT.options & REVERSE )     == REVERSE     )
 #define IS_SELECTED     ((SEGMENT.options & SELECTED)     == SELECTED    )
 
-#define MODE_COUNT  80
+#define MODE_COUNT  99
 
 #define FX_MODE_STATIC                   0
 #define FX_MODE_BLINK                    1
@@ -127,10 +141,10 @@
 #define FX_MODE_FIRE_FLICKER            45
 #define FX_MODE_GRADIENT                46
 #define FX_MODE_LOADING                 47
-#define FX_MODE_DUAL_COLOR_WIPE_IN_OUT  48
-#define FX_MODE_DUAL_COLOR_WIPE_IN_IN   49
-#define FX_MODE_DUAL_COLOR_WIPE_OUT_OUT 50
-#define FX_MODE_DUAL_COLOR_WIPE_OUT_IN  51
+#define FX_MODE_POLICE                  48
+#define FX_MODE_POLICE_ALL              49
+#define FX_MODE_TWO_DOTS                50
+#define FX_MODE_TWO_AREAS               51
 #define FX_MODE_CIRCUS_COMBUSTUS        52
 #define FX_MODE_HALLOWEEN               53
 #define FX_MODE_TRICOLOR_CHASE          54
@@ -142,7 +156,6 @@
 #define FX_MODE_DUAL_LARSON_SCANNER     60
 #define FX_MODE_RANDOM_CHASE            61
 #define FX_MODE_OSCILLATE               62
-//Modes that use FastLED -->
 #define FX_MODE_PRIDE_2015              63
 #define FX_MODE_JUGGLE                  64
 #define FX_MODE_PALETTE                 65
@@ -160,14 +173,35 @@
 #define FX_MODE_METEOR_SMOOTH           77
 #define FX_MODE_RAILWAY                 78
 #define FX_MODE_RIPPLE                  79
-
+#define FX_MODE_TWINKLEFOX              80
+#define FX_MODE_TWINKLECAT              81
+#define FX_MODE_HALLOWEEN_EYES          82
+#define FX_MODE_STATIC_PATTERN          83
+#define FX_MODE_TRI_STATIC_PATTERN      84
+#define FX_MODE_SPOTS                   85
+#define FX_MODE_SPOTS_FADE              86
+#define FX_MODE_GLITTER                 87
+#define FX_MODE_CANDLE                  88
+#define FX_MODE_STARBURST               89
+#define FX_MODE_EXPLODING_FIREWORKS     90
+#define FX_MODE_BOUNCINGBALLS           91
+#define FX_MODE_SINELON                 92
+#define FX_MODE_SINELON_DUAL            93
+#define FX_MODE_SINELON_RAINBOW         94
+#define FX_MODE_POPCORN                 95
+#define FX_MODE_DRIP                    96
+#define FX_MODE_PLASMA                  97
+#define FX_MODE_PERCENT                 98
 
 class WS2812FX {
   typedef uint16_t (WS2812FX::*mode_ptr)(void);
+
+  // pre show callback
+  typedef void (*show_callback) (void);
   
   // segment parameters
   public:
-    typedef struct Segment { // 21 bytes
+    typedef struct Segment { // 24 bytes
       uint16_t start;
       uint16_t stop; //segment invalid if stop == 0
       uint8_t speed;
@@ -175,12 +209,9 @@ class WS2812FX {
       uint8_t palette;
       uint8_t mode;
       uint8_t options; //bit pattern: msb first: transitional tbd tbd tbd tbd paused reverse selected
+      uint8_t grouping, spacing;
+      uint8_t opacity;
       uint32_t colors[NUM_COLORS];
-      //member functions
-      uint32_t color(uint8_t n)
-      {
-        return colors[n];
-      }
       void setOption(uint8_t n, bool val)
       {
         if (val) {
@@ -194,19 +225,61 @@ class WS2812FX {
       {
         return ((options >> n) & 0x01);
       }
+      bool isSelected()
+      {
+        return getOption(0);
+      }
+      bool isActive()
+      {
+        return stop > start;
+      }
+      uint16_t length()
+      {
+        return stop - start;
+      }
+      uint16_t groupLength()
+      {
+        return grouping + spacing;
+      }
+      uint16_t virtualLength()
+      {
+        uint16_t groupLen = groupLength();
+        return (length() + groupLen -1) / groupLen;
+      }
     } segment;
 
   // segment runtime parameters
-    typedef struct Segment_runtime { // 16 bytes
+    typedef struct Segment_runtime { // 28 bytes
       unsigned long next_time;
-      uint32_t counter_mode_step;
-      uint32_t counter_mode_call;
-      uint16_t aux_param;
-      uint16_t aux_param2;
-      void reset(){next_time = 0; counter_mode_step = 0; counter_mode_call = 0; aux_param = 0; aux_param2 = 0;};
+      uint32_t step;
+      uint32_t call;
+      uint16_t aux0;
+      uint16_t aux1;
+      byte* data = nullptr;
+      bool allocateData(uint16_t len){
+        if (data && _dataLen == len) return true; //already allocated
+        deallocateData();
+        if (WS2812FX::_usedSegmentData + len > MAX_SEGMENT_DATA) return false; //not enough memory
+        data = new (std::nothrow) byte[len];
+        if (!data) return false; //allocation failed
+        WS2812FX::_usedSegmentData += len;
+        _dataLen = len;
+        memset(data, 0, len);
+        return true;
+      }
+      void deallocateData(){
+        delete[] data;
+        data = nullptr;
+        WS2812FX::_usedSegmentData -= _dataLen;
+        _dataLen = 0;
+      }
+      void reset(){next_time = 0; step = 0; call = 0; aux0 = 0; aux1 = 0; deallocateData();}
+      private:
+        uint16_t _dataLen = 0;
     } segment_runtime;
 
     WS2812FX() {
+      //assign each member of the _mode[] array to its respective function reference 
       _mode[FX_MODE_STATIC]                  = &WS2812FX::mode_static;
       _mode[FX_MODE_BLINK]                   = &WS2812FX::mode_blink;
       _mode[FX_MODE_COLOR_WIPE]              = &WS2812FX::mode_color_wipe;
@@ -253,10 +326,10 @@ class WS2812FX {
       _mode[FX_MODE_FIRE_FLICKER]            = &WS2812FX::mode_fire_flicker;
       _mode[FX_MODE_GRADIENT]                = &WS2812FX::mode_gradient;
       _mode[FX_MODE_LOADING]                 = &WS2812FX::mode_loading;
-      _mode[FX_MODE_DUAL_COLOR_WIPE_IN_OUT]  = &WS2812FX::mode_dual_color_wipe_in_out;
-      _mode[FX_MODE_DUAL_COLOR_WIPE_IN_IN]   = &WS2812FX::mode_dual_color_wipe_in_in;
-      _mode[FX_MODE_DUAL_COLOR_WIPE_OUT_OUT] = &WS2812FX::mode_dual_color_wipe_out_out;
-      _mode[FX_MODE_DUAL_COLOR_WIPE_OUT_IN]  = &WS2812FX::mode_dual_color_wipe_out_in;
+      _mode[FX_MODE_POLICE]                  = &WS2812FX::mode_police;
+      _mode[FX_MODE_POLICE_ALL]              = &WS2812FX::mode_police_all;
+      _mode[FX_MODE_TWO_DOTS]                = &WS2812FX::mode_two_dots;
+      _mode[FX_MODE_TWO_AREAS]               = &WS2812FX::mode_two_areas;
       _mode[FX_MODE_CIRCUS_COMBUSTUS]        = &WS2812FX::mode_circus_combustus;
       _mode[FX_MODE_HALLOWEEN]               = &WS2812FX::mode_halloween;
       _mode[FX_MODE_TRICOLOR_CHASE]          = &WS2812FX::mode_tricolor_chase;
@@ -287,26 +360,34 @@ class WS2812FX {
       _mode[FX_MODE_METEOR_SMOOTH]           = &WS2812FX::mode_meteor_smooth;
       _mode[FX_MODE_RAILWAY]                 = &WS2812FX::mode_railway;
       _mode[FX_MODE_RIPPLE]                  = &WS2812FX::mode_ripple;
+      _mode[FX_MODE_TWINKLEFOX]              = &WS2812FX::mode_twinklefox;
+      _mode[FX_MODE_TWINKLECAT]              = &WS2812FX::mode_twinklecat;
+      _mode[FX_MODE_HALLOWEEN_EYES]          = &WS2812FX::mode_halloween_eyes;
+      _mode[FX_MODE_STATIC_PATTERN]          = &WS2812FX::mode_static_pattern;
+      _mode[FX_MODE_TRI_STATIC_PATTERN]      = &WS2812FX::mode_tri_static_pattern;
+      _mode[FX_MODE_SPOTS]                   = &WS2812FX::mode_spots;
+      _mode[FX_MODE_SPOTS_FADE]              = &WS2812FX::mode_spots_fade;
+      _mode[FX_MODE_GLITTER]                 = &WS2812FX::mode_glitter;
+      _mode[FX_MODE_CANDLE]                  = &WS2812FX::mode_candle;
+      _mode[FX_MODE_STARBURST]               = &WS2812FX::mode_starburst;
+      _mode[FX_MODE_EXPLODING_FIREWORKS]     = &WS2812FX::mode_exploding_fireworks;
+      _mode[FX_MODE_BOUNCINGBALLS]           = &WS2812FX::mode_bouncing_balls;
+      _mode[FX_MODE_SINELON]                 = &WS2812FX::mode_sinelon;
+      _mode[FX_MODE_SINELON_DUAL]            = &WS2812FX::mode_sinelon_dual;
+      _mode[FX_MODE_SINELON_RAINBOW]         = &WS2812FX::mode_sinelon_rainbow;
+      _mode[FX_MODE_POPCORN]                 = &WS2812FX::mode_popcorn;
+      _mode[FX_MODE_DRIP]                    = &WS2812FX::mode_drip;
+      _mode[FX_MODE_PLASMA]                  = &WS2812FX::mode_plasma;
+      _mode[FX_MODE_PERCENT]                 = &WS2812FX::mode_percent;
 
       _brightness = DEFAULT_BRIGHTNESS;
-      _num_segments = 1;
-      _segments[0].mode = DEFAULT_MODE;
-      _segments[0].colors[0] = DEFAULT_COLOR;
-      _segments[0].start = 0;
-      _segments[0].speed = DEFAULT_SPEED;
       currentPalette = CRGBPalette16(CRGB::Black);
       targetPalette = CloudColors_p;
-      _reverseMode = false;
-      _skipFirstMode = false;
-      colorOrder = 0;
-      paletteFade = 0;
-      paletteBlend = 0;
       ablMilliampsMax = 850;
       currentMilliamps = 0;
-      _locked = nullptr;
-      _modeUsesLock = false;
+      timebase = 0;
       bus = new NeoPixelWrapper();
-      RESET_RUNTIME;
+      resetSegments();
     }
 
     void
@@ -314,54 +395,60 @@ class WS2812FX {
       service(void),
       blur(uint8_t),
       fade_out(uint8_t r),
-      setMode(uint8_t m),
-      setSpeed(uint8_t s),
-      setIntensity(uint8_t i),
-      setPalette(uint8_t p),
-      setColor(uint8_t r, uint8_t g, uint8_t b, uint8_t w = 0),
-      setSecondaryColor(uint8_t r, uint8_t g, uint8_t b, uint8_t w = 0),
-      setColor(uint32_t c),
-      setSecondaryColor(uint32_t c),
+      setMode(uint8_t segid, uint8_t m),
+      setColor(uint8_t slot, uint8_t r, uint8_t g, uint8_t b, uint8_t w = 0),
+      setColor(uint8_t slot, uint32_t c),
       setBrightness(uint8_t b),
-      setReverseMode(bool b),
       driverModeCronixie(bool b),
       setCronixieDigits(byte* d),
       setCronixieBacklight(bool b),
-      setIndividual(uint16_t i, uint32_t col),
       setRange(uint16_t i, uint16_t i2, uint32_t col),
-      lock(uint16_t i),
-      lockRange(uint16_t i, uint16_t i2),
-      unlock(uint16_t i),
-      unlockRange(uint16_t i, uint16_t i2),
-      unlockAll(void),
+      setShowCallback(show_callback cb),
       setTransitionMode(bool t),
       trigger(void),
-      setSegment(uint8_t n, uint16_t start, uint16_t stop),
+      setSegment(uint8_t n, uint16_t start, uint16_t stop, uint8_t grouping = 0, uint8_t spacing = 0),
       resetSegments(),
       setPixelColor(uint16_t n, uint32_t c),
       setPixelColor(uint16_t n, uint8_t r, uint8_t g, uint8_t b, uint8_t w = 0),
       show(void);
 
     bool
+      reverseMode = false,
+      gammaCorrectBri = false,
+      gammaCorrectCol = true,
+      applyToAllSelected = true,
+      segmentsAreIdentical(Segment* a, Segment* b),
       setEffectConfig(uint8_t m, uint8_t s, uint8_t i, uint8_t p);
 
     uint8_t
-      paletteFade,
-      paletteBlend,
-      colorOrder,
+      mainSegment = 0,
+      paletteFade = 0,
+      paletteBlend = 0,
+      colorOrder = 0,
+      milliampsPerLed = 55,
       getBrightness(void),
       getMode(void),
       getSpeed(void),
-      getNumSegments(void),
       getModeCount(void),
       getPaletteCount(void),
       getMaxSegments(void),
+      //getFirstSelectedSegment(void),
+      getMainSegmentId(void),
+      gamma8(uint8_t),
       get_random_wheel_index(uint8_t);
 
+    uint16_t
+      ablMilliampsMax,
+      currentMilliamps,
+      triwave16(uint16_t);
+
     uint32_t
+      timebase,
       color_wheel(uint8_t),
       color_from_palette(uint16_t, bool, bool, uint8_t, uint8_t pbri = 255),
       color_blend(uint32_t,uint32_t,uint8_t),
+      gamma32(uint32_t),
+      getLastShow(void),
       getPixelColor(uint16_t),
       getColor(void);
 
@@ -373,21 +460,6 @@ class WS2812FX {
 
     WS2812FX::Segment*
       getSegments(void);
-
-    // mode helper functions
-    uint16_t
-      ablMilliampsMax,
-      currentMilliamps,
-      blink(uint32_t, uint32_t, bool strobe, bool),
-      color_wipe(uint32_t, uint32_t, bool , bool),
-      scan(bool),
-      theater_chase(uint32_t, uint32_t, bool),
-      running_base(bool),
-      dissolve(uint32_t),
-      chase(uint32_t, uint32_t, uint32_t, bool),
-      gradient_base(bool),
-      running(uint32_t, uint32_t),
-      tricolor_chase(uint32_t, uint32_t);
 
     // builtin modes
     uint16_t
@@ -440,10 +512,10 @@ class WS2812FX {
       mode_fire_flicker(void),
       mode_gradient(void),
       mode_loading(void),
-      mode_dual_color_wipe_in_out(void),
-      mode_dual_color_wipe_in_in(void),
-      mode_dual_color_wipe_out_out(void),
-      mode_dual_color_wipe_out_in(void),
+      mode_police(void),
+      mode_police_all(void),
+      mode_two_dots(void),
+      mode_two_areas(void),
       mode_circus_combustus(void),
       mode_bicolor_chase(void),
       mode_tricolor_chase(void),
@@ -471,62 +543,106 @@ class WS2812FX {
       mode_meteor(void),
       mode_meteor_smooth(void),
       mode_railway(void),
-      mode_ripple(void);
+      mode_ripple(void),
+      mode_twinklefox(void),
+      mode_twinklecat(void),
+      mode_halloween_eyes(void),
+      mode_static_pattern(void),
+	    mode_tri_static_pattern(void),
+      mode_spots(void),
+      mode_spots_fade(void),
+      mode_glitter(void),
+      mode_candle(void),
+      mode_starburst(void),
+      mode_exploding_fireworks(void),
+      mode_bouncing_balls(void),
+      mode_sinelon(void),
+      mode_sinelon_dual(void),
+      mode_sinelon_rainbow(void),
+      mode_popcorn(void),
+      mode_drip(void),
+      mode_plasma(void),
+      mode_percent(void);
+      
 
   private:
     NeoPixelWrapper *bus;
 
-    CRGB fastled_from_col(uint32_t);
+    uint32_t crgb_to_col(CRGB fastled);
+    CRGB col_to_crgb(uint32_t);
     CRGBPalette16 currentPalette;
     CRGBPalette16 targetPalette;
-  
-    uint16_t _length;
+
+    uint32_t now;
+    uint16_t _length, _lengthRaw, _virtualSegmentLength;
     uint16_t _rand16seed;
     uint8_t _brightness;
+    static uint16_t _usedSegmentData;
 
     void handle_palette(void);
     void fill(uint32_t);
-    bool modeUsesLock(uint8_t);
 
     bool
-      _modeUsesLock,
       _rgbwMode,
-      _reverseMode,
       _cronixieMode,
       _cronixieBacklightEnabled,
       _skipFirstMode,
       _triggered;
 
-    byte* _locked;
     byte _cronixieDigits[6];
 
     mode_ptr _mode[MODE_COUNT]; // SRAM footprint: 4 bytes per element
 
+    show_callback _callback = nullptr;
+
+    // mode helper functions
+    uint16_t
+      blink(uint32_t, uint32_t, bool strobe, bool),
+      color_wipe(bool, bool),
+      scan(bool),
+      theater_chase(uint32_t, uint32_t, bool),
+      running_base(bool),
+      larson_scanner(bool),
+      sinelon_base(bool,bool),
+      dissolve(uint32_t),
+      chase(uint32_t, uint32_t, uint32_t, bool),
+      gradient_base(bool),
+      police_base(uint32_t, uint32_t),
+      running(uint32_t, uint32_t),
+      tricolor_chase(uint32_t, uint32_t),
+      twinklefox_base(bool),
+      spots_base(uint16_t);
+
+    CRGB twinklefox_one_twinkle(uint32_t ms, uint8_t salt, bool cat);
     
     uint32_t _lastPaletteChange = 0;
     uint32_t _lastShow = 0;
     
     uint8_t _segment_index = 0;
     uint8_t _segment_index_palette_last = 99;
-    uint8_t _num_segments = 1;
-    segment _segments[MAX_NUM_SEGMENTS] = { // SRAM footprint: 21 bytes per element
-      // start, stop, speed, intensity, palette, mode, options, color[]
-      { 0, 7, DEFAULT_SPEED, 128, 0, DEFAULT_MODE, NO_OPTIONS, {DEFAULT_COLOR}}
+    segment _segments[MAX_NUM_SEGMENTS] = { // SRAM footprint: 24 bytes per element
+      // start, stop, speed, intensity, palette, mode, options, grouping, spacing, opacity (unused), color[]
+      { 0, 7, DEFAULT_SPEED, 128, 0, DEFAULT_MODE, NO_OPTIONS, 1, 0, 255, {DEFAULT_COLOR}}
     };
-    segment_runtime _segment_runtimes[MAX_NUM_SEGMENTS]; // SRAM footprint: 16 bytes per element
+    segment_runtime _segment_runtimes[MAX_NUM_SEGMENTS]; // SRAM footprint: 28 bytes per element
+    friend class Segment_runtime;
+
+    uint16_t realPixelIndex(uint16_t i);
 };
 
 
 //10 names per line
 const char JSON_mode_names[] PROGMEM = R"=====([
 "Solid","Blink","Breathe","Wipe","Wipe Random","Random Colors","Sweep","Dynamic","Colorloop","Rainbow",
-"Scan","Dual Scan","Fade","Chase","Chase Rainbow","Running","Saw","Twinkle","Dissolve","Dissolve Rnd",
-"Sparkle","Dark Sparkle","Sparkle+","Strobe","Strobe Rainbow","Mega Strobe","Blink Rainbow","Android","Chase","Chase Random",
+"Scan","Scan Dual","Fade","Theater","Theater Rainbow","Running","Saw","Twinkle","Dissolve","Dissolve Rnd",
+"Sparkle","Sparkle Dark","Sparkle+","Strobe","Strobe Rainbow","Strobe Mega","Blink Rainbow","Android","Chase","Chase Random",
 "Chase Rainbow","Chase Flash","Chase Flash Rnd","Rainbow Runner","Colorful","Traffic Light","Sweep Random","Running 2","Red & Blue","Stream",
-"Scanner","Lighthouse","Fireworks","Rain","Merry Christmas","Fire Flicker","Gradient","Loading","In Out","In In",
-"Out Out","Out In","Circus","Halloween","Tri Chase","Tri Wipe","Tri Fade","Lightning","ICU","Multi Comet",
-"Dual Scanner","Stream 2","Oscillate","Pride 2015","Juggle","Palette","Fire 2012","Colorwaves","BPM","Fill Noise","Noise 1",
-"Noise 2","Noise 3","Noise 4","Colortwinkle","Lake","Meteor","Smooth Meteor","Railway","Ripple"
+"Scanner","Lighthouse","Fireworks","Rain","Merry Christmas","Fire Flicker","Gradient","Loading","Police","Police All",
+"Two Dots","Two Areas","Circus","Halloween","Tri Chase","Tri Wipe","Tri Fade","Lightning","ICU","Multi Comet",
+"Scanner Dual","Stream 2","Oscillate","Pride 2015","Juggle","Palette","Fire 2012","Colorwaves","Bpm","Fill Noise",
+"Noise 1","Noise 2","Noise 3","Noise 4","Colortwinkles","Lake","Meteor","Meteor Smooth","Railway","Ripple",
+"Twinklefox","Twinklecat","Halloween Eyes","Solid Pattern","Solid Pattern Tri","Spots","Spots Fade","Glitter","Candle","Fireworks Starburst",
+"Fireworks 1D","Bouncing Balls","Sinelon","Sinelon Dual","Sinelon Rainbow","Popcorn","Drip","Plasma","Percent"
 ])=====";
 
 
@@ -535,7 +651,8 @@ const char JSON_palette_names[] PROGMEM = R"=====([
 "Forest","Rainbow","Rainbow Bands","Sunset","Rivendell","Breeze","Red & Blue","Yellowout","Analogous","Splash",
 "Pastel","Sunset 2","Beech","Vintage","Departure","Landscape","Beach","Sherbet","Hult","Hult 64",
 "Drywet","Jul","Grintage","Rewhi","Tertiary","Fire","Icefire","Cyane","Light Pink","Autumn",
-"Magenta","Magred","Yelmag","Yelblu","Orange & Teal","Tiamat","April Night"
+"Magenta","Magred","Yelmag","Yelblu","Orange & Teal","Tiamat","April Night","Orangery","C9","Sakura",
+"Aurora"
 ])=====";
 
 #endif

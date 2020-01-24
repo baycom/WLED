@@ -2,12 +2,42 @@
  * Color conversion methods
  */
 
-void colorFromUint32(uint32_t in)
+void colorFromUint32(uint32_t in, bool secondary)
 {
-  col[3] = in >> 24 & 0xFF;
-  col[0] = in >> 16 & 0xFF;
-  col[1] = in >> 8  & 0xFF;
-  col[2] = in       & 0xFF;
+  if (secondary) {
+    colSec[3] = in >> 24 & 0xFF;
+    colSec[0] = in >> 16 & 0xFF;
+    colSec[1] = in >> 8  & 0xFF;
+    colSec[2] = in       & 0xFF;
+  } else {
+    col[3] = in >> 24 & 0xFF;
+    col[0] = in >> 16 & 0xFF;
+    col[1] = in >> 8  & 0xFF;
+    col[2] = in       & 0xFF;
+  }
+}
+
+//load a color without affecting the white channel
+void colorFromUint24(uint32_t in, bool secondary = false)
+{
+  if (secondary) {
+    colSec[0] = in >> 16 & 0xFF;
+    colSec[1] = in >> 8  & 0xFF;
+    colSec[2] = in       & 0xFF;
+  } else {
+    col[0] = in >> 16 & 0xFF;
+    col[1] = in >> 8  & 0xFF;
+    col[2] = in       & 0xFF;
+  }
+}
+
+//relatively change white brightness, minumum A=5
+void relativeChangeWhite(int8_t amount, byte lowerBoundary =0)
+{
+  int16_t new_val = (int16_t) col[3] + amount;
+  if (new_val > 0xFF) new_val = 0xFF;
+  else if (new_val < lowerBoundary) new_val = lowerBoundary;
+  col[3] = new_val;
 }
 
 void colorHStoRGB(uint16_t hue, byte sat, byte* rgb) //hue, sat to rgb
@@ -27,6 +57,7 @@ void colorHStoRGB(uint16_t hue, byte sat, byte* rgb) //hue, sat to rgb
     case 4: rgb[0]=t,rgb[1]=p,rgb[2]=255;break;
     case 5: rgb[0]=255,rgb[1]=p,rgb[2]=q;
   }
+  if (useRGBW) colorRGBtoRGBW(col);
 }
 
 #ifndef WLED_DISABLE_HUESYNC
@@ -50,6 +81,7 @@ void colorCTtoRGB(uint16_t mired, byte* rgb) //white spectrum to rgb
   } else {
     rgb[0]=237;rgb[1]=255;rgb[2]=239;//150
   }
+  if (useRGBW) colorRGBtoRGBW(col);
 }
 
 void colorXYtoRGB(float x, float y, byte* rgb) //coordinates to rgb (https://www.developers.meethue.com/documentation/color-conversions-rgb-xy)
@@ -106,6 +138,7 @@ void colorXYtoRGB(float x, float y, byte* rgb) //coordinates to rgb (https://www
   rgb[0] = 255.0*r;
   rgb[1] = 255.0*g;
   rgb[2] = 255.0*b;
+  if (useRGBW) colorRGBtoRGBW(col);
 }
 
 void colorRGBtoXY(byte* rgb, float* xy) //rgb to coordinates (https://www.developers.meethue.com/documentation/color-conversions-rgb-xy)
@@ -155,6 +188,6 @@ void colorRGBtoRGBW(byte* rgb) //rgb to rgbw (http://codewelt.com/rgbw)
   float low = minf(rgb[0],minf(rgb[1],rgb[2]));
   float high = maxf(rgb[0],maxf(rgb[1],rgb[2]));
   if (high < 0.1f) return;
-  float sat = 255.0f * ((high - low) / high);
+  float sat = 100.0f * ((high - low) / high);;   // maximum saturation is 100  (corrected from 255)
   rgb[3] = (byte)((255.0f - sat) / 255.0f * (rgb[0] + rgb[1] + rgb[2]) / 3);
 }

@@ -3,12 +3,12 @@
  */
 /*
  * @title WLED project sketch
- * @version 0.8.4
+ * @version 0.8.6
  * @author Christian Schwinne
  */
 
 
-//ESP8266-01 (blue) got too little storage space to work with all features of WLED. To use it, you must use ESP8266 Arduino Core v2.3.0 and the setting 512K(64K SPIFFS).
+//ESP8266-01 (blue) got too little storage space to work with all features of WLED. To use it, you must use ESP8266 Arduino Core v2.4.2 and the setting 512K(No SPIFFS).
 
 //ESP8266-01 (black) has 1MB flash and can thus fit the whole program. Use 1M(64K SPIFFS).
 //Uncomment some of the following lines to disable features to compile for ESP8266-01 (max flash size 434kB):
@@ -35,15 +35,16 @@
 
 //library inclusions
 #include <Arduino.h>
-#ifdef ARDUINO_ARCH_ESP32
- #include <WiFi.h>
- #include <ESPmDNS.h>
- #include <AsyncTCP.h>
- #include "SPIFFS.h"
-#else
+#ifdef ESP8266
  #include <ESP8266WiFi.h>
  #include <ESP8266mDNS.h>
  #include <ESPAsyncTCP.h>
+#else
+ #include <WiFi.h>
+ #include "esp_wifi.h"
+ #include <ESPmDNS.h>
+ #include <AsyncTCP.h>
+ #include "SPIFFS.h"
 #endif
 
 #include <ESPAsyncWebServer.h>
@@ -61,6 +62,7 @@
  #define ESPALEXA_ASYNC
  #define ESPALEXA_NO_SUBPAGE
  #define ESPALEXA_MAXDEVICES 1
+ //#define ESPALEXA_DEBUG
  #include "src/dependencies/espalexa/Espalexa.h"
 #endif
 #ifndef WLED_DISABLE_BLYNK
@@ -68,18 +70,55 @@
 #endif
 #include "src/dependencies/e131/E131.h"
 #include "src/dependencies/async-mqtt-client/AsyncMqttClient.h"
-#include "src/dependencies/json/AsyncJson.h"
-#include "src/dependencies/json/ArduinoJson-v5.h"
+#include "src/dependencies/json/AsyncJson-v6.h"
+#include "src/dependencies/json/ArduinoJson-v6.h"
 #include "html_classic.h"
 #include "html_mobile.h"
 #include "html_settings.h"
 #include "html_other.h"
+#include "FX.h"
+#include "ir_codes.h"
+
+//-> BayCom
+#include <driver/adc.h>
 #include "src/dependencies/esp8266-oled-ssd1306/src/SSD1306Wire.h"
 #undef BLACK
 #undef WHITE
-#include "WS2812FX.h"
-#include "ir_codes.h"
-#include <driver/adc.h>
+char displayName[33] = "Tally";
+unsigned long displayTime = -10000;
+unsigned long lastReconnect = -10000;
+static SSD1306Wire display (0x3c, 5, 4);
+static int displayCycle = 0;
+#define SMA_LENGTH 60
+static int sma_vals[SMA_LENGTH];
+static int sma_pos = 0;
+static long sma_sum = 0;
+static int sma_init_done = 0;
+
+int SMAGenerator(int val)
+{
+  sma_sum = sma_sum - sma_vals[sma_pos] + val;
+  sma_vals[sma_pos] = val;
+  sma_pos=(sma_pos+1)%SMA_LENGTH;
+  return sma_sum / SMA_LENGTH;
+}
+
+float readBatteryLevel()
+{
+  adc1_config_width(ADC_WIDTH_BIT_12);   //Range 0-1023
+  adc1_config_channel_atten(ADC1_CHANNEL_0,ADC_ATTEN_DB_11);  //ADC_ATTEN_DB_11 = 0-3,6V
+  int val=adc1_get_raw( ADC1_CHANNEL_0 );
+  if(!sma_init_done) {
+    memset(sma_vals, 0, sizeof(sma_vals));
+    for(int i=0;i<SMA_LENGTH;i++) {
+      SMAGenerator(val);
+    }
+    sma_init_done = 1;
+  }
+  val=SMAGenerator(val);
+  return 5.0587559809 * (float)val / 4096.0f; //Read analog at voltage divider batt+10k--Tap--20k-GND
+}
+//<- BayCom
 
 #if IR_PIN < 0
  #ifndef WLED_DISABLE_INFRARED
@@ -101,8 +140,8 @@
 
 
 //version code in format yymmddb (b = daily build)
-#define VERSION 1904141
-char versionString[] = "0.8.4";
+#define VERSION 1911031
+char versionString[] = "0.8.6";
 
 
 //AP and OTA default passwords (for maximum change them!)
@@ -125,53 +164,51 @@ char cmDNS[33] = "x";                         //mDNS address (placeholder, will 
 char apSSID[33] = "";                         //AP off by default (unless setup)
 byte apChannel = 1;                           //2.4GHz WiFi AP channel (1-13)
 byte apHide = 0;                              //hidden AP SSID
-byte apWaitTimeSecs = 32;                     //time to wait for connection before opening AP
-bool recoveryAPDisabled = false;              //never open AP (not recommended)
+//byte apWaitTimeSecs = 32;                   //time to wait for connection before opening AP
+byte apBehavior = 0;                          //0: Open AP when no connection after boot 1: Open when no connection 2: Always open 3: Only when button pressed for 6 sec
+//bool recoveryAPDisabled = false;            //never open AP (not recommended)
 IPAddress staticIP(0, 0, 0, 0);               //static IP of ESP
 IPAddress staticGateway(0, 0, 0, 0);          //gateway (router) IP
 IPAddress staticSubnet(255, 255, 255, 0);     //most common subnet in home networks
 
 //LED CONFIG
-uint16_t ledCount = 30;                       //overcurrent prevented by ABL             
+uint16_t ledCount = 30;                       //overcurrent prevented by ABL
 bool useRGBW = false;                         //SK6812 strips can contain an extra White channel
 bool autoRGBtoRGBW = false;                   //if RGBW enabled, calculate White channel from RGB
-#define ABL_MILLIAMPS_DEFAULT 850;            //auto lower brightness to stay close to milliampere limit 
+#define ABL_MILLIAMPS_DEFAULT 850;            //auto lower brightness to stay close to milliampere limit
 bool turnOnAtBoot  = true;                    //turn on LEDs at power-up
 byte bootPreset = 0;                          //save preset to load after power-up
 
 byte colS[]{255, 159, 0, 0};                  //default RGB(W) color
 byte colSecS[]{0, 0, 0, 0};                   //default RGB(W) secondary color
 byte briS = 127;                              //default brightness
-byte effectDefault = 0;                   
+byte effectDefault = 0;
 byte effectSpeedDefault = 75;
 byte effectIntensityDefault = 128;            //intensity is supported on some effects as an additional parameter (e.g. for blink you can change the duty cycle)
 byte effectPaletteDefault = 0;                //palette is supported on the FastLED effects, otherwise it has no effect
-
-bool useGammaCorrectionBri = false;           //gamma correct brightness (not recommended)
-bool useGammaCorrectionRGB = true;            //gamma correct colors (strongly recommended)
 
 byte nightlightTargetBri = 0;                 //brightness after nightlight is over
 byte nightlightDelayMins = 60;
 bool nightlightFade = true;                   //if enabled, light will gradually dim towards the target bri. Otherwise, it will instantly set after delay over
 bool fadeTransition = true;                   //enable crossfading color transition
 bool enableSecTransition = true;              //also enable transition for secondary color
-uint16_t transitionDelay = 750;              //default crossfade duration in ms
+uint16_t transitionDelay = 750;               //default crossfade duration in ms
 
-bool reverseMode  = false;                    //flip entire LED strip (reverses all effect directions)
+//bool strip.reverseMode  = false;            //flip entire LED strip (reverses all effect directions) --> edit in WS2812FX.h
 bool skipFirstLed = false;                    //ignore first LED in strip (useful if you need the LED as signal repeater)
 byte briMultiplier =  100;                    //% of brightness to set (to limit power, if you set it to 50 and set bri to 255, actual brightness will be 127)
 
 
 //User Interface CONFIG
-char serverDescription[33] = "WLED Light";    //Name of module
-char displayName[33] = "Tally";
+char serverDescription[33] = "WLED";          //Name of module
 byte currentTheme = 7;                        //UI theme index for settings and classic UI
-byte uiConfiguration = 0;                     //0: automatic (depends on user-agent) 1: classic UI 2: mobile UI
+byte uiConfiguration = 2;                     //0: automatic (depends on user-agent) 1: classic UI 2: mobile UI
 bool useHSB = true;                           //classic UI: use HSB sliders instead of RGB by default
 char cssFont[33] = "Verdana";                 //font to use in classic UI
 
 bool useHSBDefault = useHSB;
 
+char displayName[33] = "Tally";
 
 //Sync CONFIG
 bool buttonEnabled =  true;
@@ -208,6 +245,10 @@ bool e131Multicast = false;
 char mqttDeviceTopic[33] = "";                //main MQTT topic (individual per device, default is wled/mac)
 char mqttGroupTopic[33] = "wled/all";         //second MQTT topic (for example to group devices)
 char mqttServer[33] = "";                     //both domains and IPs should work (no SSL)
+char mqttUser[41] = "";                       //optional: username for MQTT auth
+char mqttPass[41] = "";                       //optional: password for MQTT auth
+char mqttClientID[41] = "";                   //override the client ID
+uint16_t mqttPort = 1883;
 
 bool huePollingEnabled = false;               //poll hue bridge for light state
 uint16_t huePollIntervalMs = 2500;            //low values (< 1sec) may cause lag but offer quicker response
@@ -243,7 +284,7 @@ byte countdownMin  =  0, countdownSec   = 0;
 
 byte macroBoot = 0;                           //macro loaded after startup
 byte macroNl = 0;                             //after nightlight delay over
-byte macroCountdown = 0;                      
+byte macroCountdown = 0;
 byte macroAlexaOn = 0, macroAlexaOff = 0;
 byte macroButton = 0, macroLongPress = 0, macroDoublePress = 0;
 
@@ -258,6 +299,13 @@ uint16_t userVar0 = 0, userVar1 = 0;
 
 
 //internal global variable declarations
+//wifi
+bool apActive = false;
+bool forceReconnect = false;
+uint32_t lastReconnectAttempt = 0;
+bool interfacesInited = false;
+bool wasConnected = false;
+
 //color
 byte col[]{255, 159, 0, 0};                   //target RGB(W) color
 byte colOld[]{0, 0, 0, 0};                    //color before transition
@@ -276,6 +324,7 @@ uint16_t transitionDelayDefault = transitionDelay;
 uint16_t transitionDelayTemp = transitionDelay;
 unsigned long transitionStartTime;
 float tperLast = 0;                           //crossfade transition progress, 0.0f - 1.0f
+bool jsonTransitionOnce = false;
 
 //nightlight
 bool nightlightActive = false;
@@ -296,6 +345,7 @@ byte briLast = 127;                           //brightness before turned off. Us
 
 //button
 bool buttonPressedBefore = false;
+bool buttonLongPressed = false;
 unsigned long buttonPressedTime = 0;
 unsigned long buttonWaitTime = 0;
 
@@ -313,7 +363,6 @@ byte effectIntensity = effectIntensityDefault;
 byte effectPalette = effectPaletteDefault;
 
 //network
-bool onlyAP = false;                          //only Access Point active, no connection to home network
 bool udpConnected = false, udpRgbConnected = false;
 
 //ui style
@@ -330,8 +379,6 @@ unsigned long hueLastRequestSent = 0;
 bool hueAuthRequired = false;
 bool hueReceived = false;
 bool hueStoreAllowed = false, hueNewKey = false;
-//unsigned long huePollIntervalMsTemp = huePollIntervalMs;
-//bool hueAttempt = false;
 
 //overlays
 byte overlayCurrent = overlayDefault;
@@ -377,10 +424,9 @@ IPAddress realtimeIP = (0,0,0,0);
 unsigned long realtimeTimeout = 0;
 
 //mqtt
-long lastMQTTReconnectAttempt = 0;
+long lastMqttReconnectAttempt = 0;
 long lastInterfaceUpdate = 0;
 byte interfaceUpdateCallMode = 0;
-uint32_t mqttFailedConAttempts = 0;
 
 #if AUXPIN >= 0
 //auxiliary debug pin
@@ -398,7 +444,6 @@ EspalexaDevice* espalexaDevice;
 
 //dns server
 DNSServer dnsServer;
-bool dnsActive = false;
 
 //network time
 bool ntpConnected = false;
@@ -406,8 +451,11 @@ time_t local = 0;
 unsigned long ntpLastSyncTime = 999000000L;
 unsigned long ntpPacketSentTime = 999000000L;
 IPAddress ntpServerIP;
-unsigned int ntpLocalPort = 2390;
+uint16_t ntpLocalPort = 2390;
 #define NTP_PACKET_SIZE 48
+
+#define MAX_LEDS 1500
+#define MAX_LEDS_DMA 500
 
 //string temp buffer (now stored in stack locally)
 #define OMAX 2048
@@ -418,6 +466,8 @@ String messageHead, messageSub;
 byte optionType;
 
 bool doReboot = false; //flag to initiate reboot from async handlers
+bool doPublishMqtt = false;
+bool doSendHADiscovery = true;
 
 //server library objects
 AsyncWebServer server(80);
@@ -428,11 +478,12 @@ AsyncMqttClient* mqtt = NULL;
 WiFiUDP notifierUdp, rgbUdp;
 WiFiUDP ntpUdp;
 E131* e131;
-unsigned long displayTime = -10000;
-unsigned long lastReconnect = -10000;
 
 //led fx library object
 WS2812FX strip = WS2812FX();
+
+#define WLED_CONNECTED (WiFi.status() == WL_CONNECTED)
+#define WLED_WIFI_CONFIGURED (strlen(clientSSID) >= 1 && strcmp(clientSSID,"Your_Network") != 0)
 
 //debug macros
 #ifdef WLED_DEBUG
@@ -442,6 +493,7 @@ WS2812FX strip = WS2812FX();
  unsigned long debugTime = 0;
  int lastWifiState = 3;
  unsigned long wifiStateChangedTime = 0;
+ int loops = 0;
 #else
  #define DEBUG_PRINT(x)
  #define DEBUG_PRINTLN(x)
@@ -457,60 +509,10 @@ WS2812FX strip = WS2812FX();
  #include "SPIFFSEditor.h"
 #endif
 
-//gamma 2.4 lookup table used for color correction
-const byte gamma8[] = {
-    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  1,  1,  1,  1,
-    1,  1,  1,  1,  1,  1,  1,  1,  1,  2,  2,  2,  2,  2,  2,  2,
-    2,  3,  3,  3,  3,  3,  3,  3,  4,  4,  4,  4,  4,  5,  5,  5,
-    5,  6,  6,  6,  6,  7,  7,  7,  7,  8,  8,  8,  9,  9,  9, 10,
-   10, 10, 11, 11, 11, 12, 12, 13, 13, 13, 14, 14, 15, 15, 16, 16,
-   17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22, 23, 24, 24, 25,
-   25, 26, 27, 27, 28, 29, 29, 30, 31, 32, 32, 33, 34, 35, 35, 36,
-   37, 38, 39, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 50,
-   51, 52, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 66, 67, 68,
-   69, 70, 72, 73, 74, 75, 77, 78, 79, 81, 82, 83, 85, 86, 87, 89,
-   90, 92, 93, 95, 96, 98, 99,101,102,104,105,107,109,110,112,114,
-  115,117,119,120,122,124,126,127,129,131,133,135,137,138,140,142,
-  144,146,148,150,152,154,156,158,160,162,164,167,169,171,173,175,
-  177,180,182,184,186,189,191,193,196,198,200,203,205,208,210,213,
-  215,218,220,223,225,228,231,233,236,239,241,244,247,249,252,255 };
-
-static SSD1306Wire display (0x3c, 5, 4);
-static int displayCycle = 0;
 
 //function prototypes
 void serveMessage(AsyncWebServerRequest*,uint16_t,String,String,byte);
 
-#define SMA_LENGTH 60
-static int sma_vals[SMA_LENGTH];
-static int sma_pos = 0;
-static long sma_sum = 0;
-static int sma_init_done = 0;
-
-int SMAGenerator(int val)
-{
-  sma_sum = sma_sum - sma_vals[sma_pos] + val;
-  sma_vals[sma_pos] = val;
-  sma_pos=(sma_pos+1)%SMA_LENGTH;
-  return sma_sum / SMA_LENGTH;
-}
-
-float readBatteryLevel()
-{
-  adc1_config_width(ADC_WIDTH_BIT_12);   //Range 0-1023
-  adc1_config_channel_atten(ADC1_CHANNEL_0,ADC_ATTEN_DB_11);  //ADC_ATTEN_DB_11 = 0-3,6V
-  int val=adc1_get_raw( ADC1_CHANNEL_0 );
-  if(!sma_init_done) {
-    memset(sma_vals, 0, sizeof(sma_vals));
-    for(int i=0;i<SMA_LENGTH;i++) {
-      SMAGenerator(val);
-    }
-    sma_init_done = 1;
-  }
-  val=SMAGenerator(val);
-  return 5.0587559809 * (float)val / 4096.0f; //Read analog at voltage divider batt+10k--Tap--20k-GND
-}
 
 //turns all LEDs off and restarts ESP
 void reset()
@@ -541,7 +543,7 @@ bool oappend(char* txt)
 //append new number to temp buffer efficiently
 bool oappendi(int i)
 {
-  char s[11]; 
+  char s[11];
   sprintf(s,"%ld", i);
   return oappend(s);
 }
@@ -549,17 +551,20 @@ bool oappendi(int i)
 
 //boot starts here
 void setup() {
+//-> BayCom
   display.init();
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setFont(ArialMT_Plain_16);
   display.drawString(64, 24, "Version: " + String(versionString));
   display.display();
+//<- BayCom
   wledInit();
 }
 
+
 //main program loop
 void loop() {
-  if(!onlyAP && WiFi.status() == 6) {
+//-> BayCom
     if(millis()-lastReconnect > 5000) {
       DEBUG_PRINTLN("+++++++++++++ trying to reconnect +++++++++++++");
       WiFi.reconnect();
@@ -577,7 +582,7 @@ void loop() {
     float cellFullVoltage = 4.2;
     float cellEmptyVoltage = 3.3;
     int battPercent = 0;
-    float batteryLevel=readBatteryLevel();
+   float batteryLevel=readBatteryLevel();
 
     if(batteryLevel) {
       battPercent=((batteryLevel-cellEmptyVoltage)/(cellFullVoltage-cellEmptyVoltage))*100;
@@ -615,38 +620,41 @@ void loop() {
     displayCycle++;
     displayTime = millis();
   }
-
+//<- BayCom
+  handleConnection();
   handleSerial();
   handleNotifications();
   handleTransitions();
   userLoop();
-  
+
   yield();
   handleIO();
   handleIR();
   handleNetworkTime();
-  if (!onlyAP) handleAlexa();
-  
-  handleOverlays();
+  handleAlexa();
 
+  handleOverlays();
+  if (doSendHADiscovery) sendHADiscoveryMQTT();
   yield();
   if (doReboot) reset();
-  
+
   if (!realtimeActive) //block stuff if WARLS/Adalight is enabled
   {
-    if (dnsActive) dnsServer.processNextRequest();
+    if (apActive) dnsServer.processNextRequest();
     #ifndef WLED_DISABLE_OTA
-     if (aOtaEnabled) ArduinoOTA.handle();
+    if (WLED_CONNECTED && aOtaEnabled) ArduinoOTA.handle();
     #endif
     handleNightlight();
     yield();
-    if (!onlyAP) {
-      handleHue();
-      handleBlynk();
-    }
+
+    handleHue();
+    handleBlynk();
+
     yield();
     if (!offMode) strip.service();
   }
+  yield();
+  if (millis() - lastMqttReconnectAttempt > 30000) initMqtt();
 
   //DEBUG serial logging
   #ifdef WLED_DEBUG
@@ -665,7 +673,10 @@ void loop() {
      DEBUG_PRINT("State time: "); DEBUG_PRINTLN(wifiStateChangedTime);
      DEBUG_PRINT("NTP last sync: "); DEBUG_PRINTLN(ntpLastSyncTime);
      DEBUG_PRINT("Client IP: "); DEBUG_PRINTLN(WiFi.localIP());
-     debugTime = millis(); 
+     DEBUG_PRINT("Loops/sec: "); DEBUG_PRINTLN(loops/10);
+     loops = 0;
+     debugTime = millis();
    }
+   loops++;
   #endif
 }
