@@ -76,6 +76,11 @@
 #include "FX.h"
 #include "ir_codes.h"
 
+//-> BayCom
+#undef BLACK
+#undef WHITE
+//<- BayCom
+
 
 #if IR_PIN < 0
  #ifndef WLED_DISABLE_INFRARED
@@ -462,8 +467,6 @@ WS2812FX strip = WS2812FX();
 //-> BayCom
 #include <driver/adc.h>
 #include "src/dependencies/esp8266-oled-ssd1306/src/SSD1306Wire.h"
-#undef BLACK
-#undef WHITE
 char displayName[33] = "Tally";
 unsigned long displayTime = -10000;
 unsigned long lastReconnect = -10000;
@@ -554,17 +557,17 @@ void setup() {
 //main program loop
 void loop() {
 //-> BayCom
+  if(!apActive && WiFi.status() >= WL_CONNECTION_LOST) {
     if(millis()-lastReconnect > 5000) {
       DEBUG_PRINTLN("+++++++++++++ trying to reconnect +++++++++++++");
       WiFi.reconnect();
-#ifdef ARDUINO_ARCH_ESP32
+  #ifdef ARDUINO_ARCH_ESP32
       WiFi.setHostname(serverDescription);
       WiFi.setSleep(false);
-#endif
+  #endif
       lastReconnect = millis();
     }
   }
-
   if (millis() - displayTime > 1000) {
 
     int toggle=(displayCycle>>4)&1;

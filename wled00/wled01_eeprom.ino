@@ -250,9 +250,9 @@ void saveSettingsToEEPROM()
   writeStringToEEPROM(2440, mqttPass, 40);
   writeStringToEEPROM(2481, mqttClientID, 40);
 
-//-> BayCom  
+//<- BayCom  
   writeStringToEEPROM(2944, displayName, 32);
-//<- BayCom
+//-> BayCom
 
   EEPROM.write(2522, mqttPort & 0xFF);
   EEPROM.write(2523, (mqttPort >> 8) & 0xFF);
@@ -512,6 +512,10 @@ void loadSettingsFromEEPROM(bool first)
 
   //user MOD memory
   //2944 - 3071 reserved
+  
+  //<- BayCom
+  readStringFromEEPROM(2944, displayName, 32);
+  //-> BayCom
 
   overlayCurrent = overlayDefault;
 
