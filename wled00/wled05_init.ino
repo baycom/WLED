@@ -190,7 +190,11 @@ void initConnection()
    WiFi.begin(clientSSID, clientPass);
   #ifdef ARDUINO_ARCH_ESP32
    WiFi.setHostname(serverDescription);
+
+//-> BayCom
    WiFi.setSleep(false);
+//<- BayCom
+
   #endif
 }
 
